@@ -54,9 +54,19 @@ export async function ocrDoc(
     const ctx = canvas.getContext("2d");
     if (!ctx) continue;
 
+    // Paint a white background: PDFs that don't draw their own page fill render
+    // onto a transparent canvas, which OCR reads as black-on-black (nothing).
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
     // intent:"print" disables pdf.js's requestAnimationFrame-based scheduling,
     // which never fires in a background/inactive tab and would hang render().
-    await page.render({ canvas, viewport, intent: "print" }).promise;
+    await page.render({
+      canvas,
+      viewport,
+      intent: "print",
+      background: "#ffffff",
+    }).promise;
     const { data } = await worker.recognize(canvas.toDataURL("image/png"));
     pages.push(data.text);
 
