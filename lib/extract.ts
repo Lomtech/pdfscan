@@ -5,14 +5,34 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function makeBoundaryRegex(term: string, caseSensitive: boolean): RegExp {
-  const esc = escapeRegex(term);
-  const startsWord = /^[A-Za-z0-9]/.test(term);
-  const endsWord = /[A-Za-z0-9]/.test(term[term.length - 1]);
-  const left = startsWord ? "(?<![A-Za-z0-9_])" : "";
-  const right = endsWord ? "(?![A-Za-z0-9_])" : "";
-  const flags = caseSensitive ? "gu" : "giu";
-  return new RegExp(`${left}${esc}${right}`, flags);
+function makeTermRegex(term: string, caseSensitive: boolean): RegExp {
+  return new RegExp(escapeRegex(term), caseSensitive ? "gu" : "giu");
+}
+
+const WORD = /[A-Za-z0-9_]/;
+const LOWER_OR_DIGIT = /[a-z0-9äöüß]/;
+const UPPER = /[A-ZÄÖÜ]/;
+
+// Boundary check on the ACTUAL matched text (case matters even when matching is
+// case-insensitive). Valid when: at the document edge, next to a non-word char,
+// OR a real camelCase hump — which lets "Java" be found inside glued skill-chip
+// lists like "AngularJavaSpring" that some PDFs export without separators.
+function validLeft(text: string, start: number, matched: string): boolean {
+  const first = matched[0];
+  if (!WORD.test(first)) return true; // term begins with punctuation (.NET, …)
+  if (start === 0) return true;
+  const prev = text[start - 1];
+  if (!WORD.test(prev)) return true;
+  return LOWER_OR_DIGIT.test(prev) && UPPER.test(first); // lower→Upper hump
+}
+
+function validRight(text: string, end: number, matched: string): boolean {
+  const last = matched[matched.length - 1];
+  if (!WORD.test(last)) return true; // term ends with punctuation (C++, C#, …)
+  if (end >= text.length) return true;
+  const next = text[end];
+  if (!WORD.test(next)) return true;
+  return LOWER_OR_DIGIT.test(last) && UPPER.test(next); // lower→Upper hump
 }
 
 const YEARS_RE =
@@ -29,11 +49,14 @@ export function extract(text: string): ExtractionResult {
   const claimed: { start: number; end: number }[] = [];
 
   for (const { skill, term, caseSensitive } of allSkillTerms()) {
-    const re = makeBoundaryRegex(term, caseSensitive);
+    const re = makeTermRegex(term, caseSensitive);
     let m: RegExpExecArray | null;
     while ((m = re.exec(text)) !== null) {
       const start = m.index;
       const end = start + m[0].length;
+      if (!validLeft(text, start, m[0]) || !validRight(text, end, m[0])) {
+        continue;
+      }
       const overlaps = claimed.some(
         (r) => !(end <= r.start || start >= r.end),
       );
