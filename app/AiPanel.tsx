@@ -78,15 +78,30 @@ export function AiPanel({
 
       <div className="px-4 py-3 space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-zinc-500">Anbieter:</span>
-          <select
-            className={inputCls}
-            value={provider}
-            onChange={(e) => onChangeProvider(e.target.value as AiProvider)}
-          >
-            <option value="anthropic">Anthropic (Cloud)</option>
-            <option value="local">Lokal / VPC (Ollama · LM Studio · vLLM)</option>
-          </select>
+          <div className="inline-flex rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden text-sm">
+            <button
+              type="button"
+              onClick={() => onChangeProvider("anthropic")}
+              className={
+                provider === "anthropic"
+                  ? "px-3 py-1.5 bg-violet-600 text-white font-semibold"
+                  : "px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              }
+            >
+              ☁️ Cloud (Anthropic)
+            </button>
+            <button
+              type="button"
+              onClick={() => onChangeProvider("local")}
+              className={
+                provider === "local"
+                  ? "px-3 py-1.5 bg-emerald-600 text-white font-semibold"
+                  : "px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              }
+            >
+              🔒 Souverän · lokal / Air-Gap
+            </button>
+          </div>
           {provider === "local" && (
             <input
               className={`${inputCls} flex-1 min-w-[260px]`}
@@ -96,6 +111,17 @@ export function AiPanel({
             />
           )}
         </div>
+        <p
+          className={
+            provider === "local"
+              ? "text-xs text-emerald-700 dark:text-emerald-400"
+              : "text-xs text-zinc-500"
+          }
+        >
+          {provider === "local"
+            ? "🔒 Souverän: PDFs und Tokens verlassen deine Umgebung nicht — Inferenz läuft auf dem angegebenen Endpoint (lokal/VPC)."
+            : "☁️ Cloud: Seitenbilder gehen mit deinem Schlüssel an Anthropic. PDFs selbst bleiben lokal."}
+        </p>
         <input
           type="password"
           className={`${inputCls} w-full`}
