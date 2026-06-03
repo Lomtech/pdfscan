@@ -66,9 +66,20 @@ export default function Home() {
   const [reanalyzing, setReanalyzing] = useState(false);
   const [showAi, setShowAi] = useState(false);
   const [aiKey, setAiKey] = useState("");
-  const [aiModel, setAiModel] = useState("claude-sonnet-4-5");
   const [aiProvider, setAiProvider] = useState<AiProvider>("anthropic");
   const [aiBaseUrl, setAiBaseUrl] = useState("http://localhost:11434/v1");
+  // Model is remembered PER provider, so switching Cloud↔Souverän keeps each
+  // side's choice instead of carrying a Claude model into local mode or vice versa.
+  const [aiModelAnthropic, setAiModelAnthropic] = useState("claude-sonnet-4-5");
+  const [aiModelLocal, setAiModelLocal] = useState("");
+  const aiModel = aiProvider === "anthropic" ? aiModelAnthropic : aiModelLocal;
+  const setAiModel = useCallback(
+    (v: string | ((prev: string) => string)) => {
+      if (aiProvider === "anthropic") setAiModelAnthropic(v);
+      else setAiModelLocal(v);
+    },
+    [aiProvider],
+  );
   const [aiBusy, setAiBusy] = useState(false);
   const [aiProgress, setAiProgress] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
@@ -88,10 +99,12 @@ export default function Home() {
     setTaxonomy(loadTaxonomy());
     try {
       setAiKey(localStorage.getItem("pdf-skill-extractor:aiKey") ?? "");
-      setAiModel(
-        localStorage.getItem("pdf-skill-extractor:aiModel") ||
+      setAiModelAnthropic(
+        localStorage.getItem("pdf-skill-extractor:aiModelAnthropic") ||
+          localStorage.getItem("pdf-skill-extractor:aiModel") ||
           "claude-sonnet-4-5",
       );
+      setAiModelLocal(localStorage.getItem("pdf-skill-extractor:aiModelLocal") || "");
       const prov = localStorage.getItem("pdf-skill-extractor:aiProvider");
       if (prov === "local" || prov === "anthropic") setAiProvider(prov);
       setAiBaseUrl(
@@ -274,13 +287,14 @@ export default function Home() {
   const saveAiSettings = useCallback(() => {
     try {
       localStorage.setItem("pdf-skill-extractor:aiKey", aiKey.trim());
-      localStorage.setItem("pdf-skill-extractor:aiModel", aiModel.trim());
+      localStorage.setItem("pdf-skill-extractor:aiModelAnthropic", aiModelAnthropic.trim());
+      localStorage.setItem("pdf-skill-extractor:aiModelLocal", aiModelLocal.trim());
       localStorage.setItem("pdf-skill-extractor:aiProvider", aiProvider);
       localStorage.setItem("pdf-skill-extractor:aiBaseUrl", aiBaseUrl.trim());
     } catch {
       /* ignore */
     }
-  }, [aiKey, aiModel, aiProvider, aiBaseUrl]);
+  }, [aiKey, aiModelAnthropic, aiModelLocal, aiProvider, aiBaseUrl]);
 
   const aiReady =
     aiProvider === "anthropic" ? !!aiKey.trim() : !!aiBaseUrl.trim();
@@ -350,12 +364,14 @@ export default function Home() {
     loadModels,
   ]);
 
-  // Self-heal: when a model list loads and no model is selected, pick the first.
+  // Self-heal: when a model list loads and the current provider has no model
+  // selected, pick the first available one (writes to the current provider).
   useEffect(() => {
-    if (modelOptions.length > 0) {
-      setAiModel((prev) => (prev.trim() ? prev : modelOptions[0].id));
-    }
-  }, [modelOptions]);
+    if (modelOptions.length === 0) return;
+    const setter =
+      aiProvider === "anthropic" ? setAiModelAnthropic : setAiModelLocal;
+    setter((prev) => (prev.trim() ? prev : modelOptions[0].id));
+  }, [modelOptions, aiProvider]);
 
   const runAiAll = useCallback(async () => {
     if (!aiReady) {
