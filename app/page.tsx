@@ -267,6 +267,26 @@ export default function Home() {
     }
   }, [aiKey, aiModel]);
 
+  // Persist key/model immediately on change so a reload keeps the choice
+  // (e.g. picking Haiku sticks instead of reverting to the default).
+  const onChangeAiKey = useCallback((v: string) => {
+    setAiKey(v);
+    try {
+      localStorage.setItem("pdf-skill-extractor:aiKey", v.trim());
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const onChangeAiModel = useCallback((v: string) => {
+    setAiModel(v);
+    try {
+      if (v.trim()) localStorage.setItem("pdf-skill-extractor:aiModel", v.trim());
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const aiReady = !!aiKey.trim();
 
   const loadModels = useCallback(
@@ -307,10 +327,20 @@ export default function Home() {
     }
   }, [showAi, aiReady, aiKey, modelOptions.length, modelsLoading, loadModels]);
 
-  // Self-heal: when the model list loads and no model is selected, pick the first.
+  // Self-heal: when the model list loads and no model is selected, pick the
+  // first available one (and persist it).
   useEffect(() => {
     if (modelOptions.length === 0) return;
-    setAiModel((prev) => (prev.trim() ? prev : modelOptions[0].id));
+    setAiModel((prev) => {
+      if (prev.trim()) return prev;
+      const first = modelOptions[0].id;
+      try {
+        localStorage.setItem("pdf-skill-extractor:aiModel", first);
+      } catch {
+        /* ignore */
+      }
+      return first;
+    });
   }, [modelOptions]);
 
   const runAiAll = useCallback(async () => {
@@ -562,8 +592,8 @@ export default function Home() {
           modelsLoading={modelsLoading}
           modelsError={modelsError}
           onLoadModels={() => void loadModels(false)}
-          onChangeKey={setAiKey}
-          onChangeModel={setAiModel}
+          onChangeKey={onChangeAiKey}
+          onChangeModel={onChangeAiModel}
           onSave={() => {
             saveAiSettings();
             showToast("Einstellungen gespeichert");
