@@ -16,7 +16,7 @@ export async function getPdfjs() {
   return pdfjsLibPromise;
 }
 
-export async function loadPdf(file: File): Promise<{
+export async function loadPdf(file: Blob): Promise<{
   doc: PDFDocumentProxy;
   destroy: () => Promise<void>;
 }> {

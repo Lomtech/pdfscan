@@ -40,6 +40,22 @@ export interface ExtractionResult {
 
 export type ParseMethod = "text" | "ocr" | "empty";
 
+export interface AiSkill {
+  name: string;
+  category: string | null;
+  level: number | null;
+  levelMax: number | null;
+  required: boolean | null;
+}
+
+export interface AiResult {
+  roleTitle: string | null;
+  docType: string | null;
+  skills: AiSkill[];
+  model: string;
+  at: number;
+}
+
 export interface DocRecord {
   id: string;
   name: string;
@@ -49,6 +65,10 @@ export interface DocRecord {
   classification: Classification;
   extraction: ExtractionResult;
   addedAt: number;
+  /** Original PDF bytes, kept so KI-Analyse can re-render pages on demand. */
+  blob?: Blob;
+  /** Structured result from the optional Claude-vision analysis. */
+  ai?: AiResult;
 }
 
 export const CATEGORY_LABELS: Record<Category, string> = {

@@ -6,6 +6,10 @@ import { classify } from "@/lib/classify";
 import { buildWorkbook } from "@/lib/excel";
 import { extract } from "@/lib/extract";
 import { parsePdf } from "@/lib/parse";
+import { analyzeWithClaude } from "@/lib/ai";
+import { loadPdf } from "@/lib/pdf";
+import { renderPageImages } from "@/lib/ocr";
+import { AiPanel } from "./AiPanel";
 import { clearAll, deleteDoc, listDocs, putDoc } from "@/lib/storage";
 import { skillById } from "@/lib/taxonomy";
 import { CustomizingPanel } from "./CustomizingPanel";
@@ -54,9 +58,23 @@ export default function Home() {
   const [taxonomy, setTaxonomy] = useState<Skill[]>([]);
   const [showCust, setShowCust] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
+  const [showAi, setShowAi] = useState(false);
+  const [aiKey, setAiKey] = useState("");
+  const [aiModel, setAiModel] = useState("claude-sonnet-4-5");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiProgress, setAiProgress] = useState("");
 
   useEffect(() => {
     setTaxonomy(loadTaxonomy());
+    try {
+      setAiKey(localStorage.getItem("pdf-skill-extractor:aiKey") ?? "");
+      setAiModel(
+        localStorage.getItem("pdf-skill-extractor:aiModel") ||
+          "claude-sonnet-4-5",
+      );
+    } catch {
+      /* ignore */
+    }
     listDocs().then((d) => {
       setDocs(d);
       setLoaded(true);
@@ -113,6 +131,7 @@ export default function Home() {
           classification,
           extraction,
           addedAt: Date.now(),
+          blob: file,
         };
         await putDoc(rec);
         setDocs((d) => [...d, rec]);
@@ -216,6 +235,90 @@ export default function Home() {
     void applyTaxonomy(resetTaxonomy());
   }, [applyTaxonomy]);
 
+  const saveAiSettings = useCallback(() => {
+    try {
+      localStorage.setItem("pdf-skill-extractor:aiKey", aiKey.trim());
+      localStorage.setItem("pdf-skill-extractor:aiModel", aiModel.trim());
+    } catch {
+      /* ignore */
+    }
+  }, [aiKey, aiModel]);
+
+  const runAiAll = useCallback(async () => {
+    const cfg = { apiKey: aiKey.trim(), model: aiModel.trim() };
+    if (!cfg.apiKey) {
+      alert("Bitte zuerst den Anthropic API-Key eintragen.");
+      return;
+    }
+    const targets = docs.filter((d) => d.blob);
+    if (targets.length === 0) {
+      alert(
+        "Keine Dokumente mit gespeicherten PDF-Daten. Für die KI-Analyse die PDFs bitte neu hochladen.",
+      );
+      return;
+    }
+    saveAiSettings();
+    setAiBusy(true);
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        const d = targets[i];
+        setAiProgress(`${i + 1}/${targets.length}: ${d.name}`);
+        try {
+          const { doc: pdf, destroy } = await loadPdf(d.blob as Blob);
+          let images: string[];
+          try {
+            images = await renderPageImages(pdf, 8);
+          } finally {
+            await destroy();
+          }
+          const ai = await analyzeWithClaude(images, cfg);
+          const rec: DocRecord = { ...d, ai };
+          await putDoc(rec);
+          setDocs((prev) => prev.map((x) => (x.id === d.id ? rec : x)));
+        } catch (e) {
+          // Stop on first error (e.g. bad key/model) so we don't burn calls.
+          setAiProgress(`Abbruch bei ${d.name}: ${(e as Error).message}`);
+          return;
+        }
+      }
+      setAiProgress(`Fertig: ${targets.length} Dokument(e) analysiert.`);
+    } finally {
+      setAiBusy(false);
+    }
+  }, [docs, aiKey, aiModel, saveAiSettings]);
+
+  const downloadAiJson = useCallback(() => {
+    const payload = docs
+      .filter((d) => d.ai)
+      .map((d) => ({
+        document: d.name,
+        classifierType: d.classification.type,
+        ...d.ai,
+      }));
+    if (payload.length === 0) return;
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const ts = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+    a.href = url;
+    a.download = `ki-skills-${ts}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, [docs]);
+
+  const aiAnalyzedCount = useMemo(
+    () => docs.filter((d) => d.ai).length,
+    [docs],
+  );
+  const aiWithBlobCount = useMemo(
+    () => docs.filter((d) => d.blob).length,
+    [docs],
+  );
+
   const topSkills = agg.skillsTotal;
 
   return (
@@ -314,6 +417,13 @@ export default function Home() {
           </button>
           <button
             type="button"
+            onClick={() => setShowAi((v) => !v)}
+            className="px-4 py-2 rounded font-semibold text-sm border border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/40"
+          >
+            {showAi ? "KI-Analyse schließen" : "KI-Analyse"}
+          </button>
+          <button
+            type="button"
             onClick={() => void reanalyze(docs)}
             disabled={docs.length === 0 || reanalyzing}
             title="Alle Dokumente mit der aktuellen Skill-Liste neu auswerten (ohne erneuten Upload)"
@@ -339,6 +449,23 @@ export default function Home() {
           </button>
         </div>
       </section>
+
+      {showAi && (
+        <AiPanel
+          apiKey={aiKey}
+          model={aiModel}
+          onChangeKey={setAiKey}
+          onChangeModel={setAiModel}
+          onSave={saveAiSettings}
+          onRunAll={runAiAll}
+          onDownload={downloadAiJson}
+          busy={aiBusy}
+          progress={aiProgress}
+          analyzedCount={aiAnalyzedCount}
+          withBlobCount={aiWithBlobCount}
+          totalDocs={docs.length}
+        />
+      )}
 
       {showCust && (
         <CustomizingPanel
@@ -395,6 +522,19 @@ export default function Home() {
                   <span className="text-xs text-zinc-500 tabular-nums">
                     {d.extraction.skills.length} Skills
                   </span>
+                  {d.ai && (
+                    <span
+                      className="text-xs font-semibold px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900 dark:text-violet-200"
+                      title={d.ai.skills
+                        .map(
+                          (s) =>
+                            `${s.name}${s.level != null ? ` ${s.level}${s.levelMax != null ? "/" + s.levelMax : ""}` : ""}`,
+                        )
+                        .join(", ")}
+                    >
+                      KI: {d.ai.skills.length}
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={() => onDelete(d.id)}
