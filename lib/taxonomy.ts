@@ -1,6 +1,6 @@
 import type { Skill } from "./types";
 
-export const TAXONOMY: Skill[] = [
+export const BUILTIN_TAXONOMY: Skill[] = [
   // ───────── Programming Languages ─────────
   { id: "javascript", label: "JavaScript", category: "programming", aliases: ["JS", "ECMAScript", "ES6", "ES2020"] },
   { id: "typescript", label: "TypeScript", category: "programming", aliases: ["TS"] },
@@ -228,7 +228,7 @@ export const TAXONOMY: Skill[] = [
   { id: "cassandra", label: "Cassandra", category: "database" },
   { id: "redis", label: "Redis", category: "database" },
   { id: "memcached", label: "Memcached", category: "database" },
-  { id: "elasticsearch", label: "Elasticsearch", category: "database", aliases: ["ElasticSearch", "ES"] },
+  { id: "elasticsearch", label: "Elasticsearch", category: "database", aliases: ["ElasticSearch"] },
   { id: "opensearch", label: "OpenSearch", category: "database" },
   { id: "solr", label: "Apache Solr", category: "database", aliases: ["Solr"] },
   { id: "neo4j", label: "Neo4j", category: "database" },
@@ -263,7 +263,7 @@ export const TAXONOMY: Skill[] = [
   { id: "confluence", label: "Confluence", category: "tool" },
   { id: "slack", label: "Slack", category: "tool" },
   { id: "ms-teams", label: "Microsoft Teams", category: "tool", aliases: ["MS Teams"] },
-  { id: "notion", label: "Notion", category: "tool" },
+  { id: "notion", label: "Notion", category: "tool", caseSensitive: true },
   { id: "linear", label: "Linear", category: "tool", caseSensitive: true },
   { id: "asana", label: "Asana", category: "tool" },
   { id: "trello", label: "Trello", category: "tool" },
@@ -356,9 +356,9 @@ export const TAXONOMY: Skill[] = [
   { id: "agile", label: "Agile", category: "methodology" },
   { id: "scrum", label: "Scrum", category: "methodology" },
   { id: "kanban", label: "Kanban", category: "methodology" },
-  { id: "lean", label: "Lean", category: "methodology" },
+  { id: "lean", label: "Lean", category: "methodology", matchTerms: ["Lean Management", "Lean"], caseSensitive: true },
   { id: "xp", label: "Extreme Programming", category: "methodology", aliases: ["XP"] },
-  { id: "safe", label: "SAFe", category: "methodology", aliases: ["Scaled Agile Framework"] },
+  { id: "safe", label: "SAFe", category: "methodology", matchTerms: ["Scaled Agile Framework", "SAFe"], caseSensitive: true },
   { id: "less-framework", label: "LeSS", category: "methodology", aliases: ["Large-Scale Scrum"] },
   { id: "waterfall", label: "Wasserfall", category: "methodology", aliases: ["Waterfall"] },
   { id: "devops", label: "DevOps", category: "methodology" },
@@ -439,25 +439,47 @@ export const TAXONOMY: Skill[] = [
   { id: "ss-stakeholder", label: "Stakeholder Management", category: "soft-skill" },
 ];
 
-interface SkillTerm {
+export interface SkillTerm {
   skill: Skill;
   term: string;
   caseSensitive: boolean;
 }
 
-const ALL_TERMS: SkillTerm[] = [];
-for (const s of TAXONOMY) {
-  const terms = s.matchTerms ?? [s.label, ...(s.aliases ?? [])];
-  for (const t of terms) {
-    ALL_TERMS.push({ skill: s, term: t, caseSensitive: !!s.caseSensitive });
+function buildTerms(taxonomy: Skill[]): SkillTerm[] {
+  const out: SkillTerm[] = [];
+  for (const s of taxonomy) {
+    const terms = s.matchTerms ?? [s.label, ...(s.aliases ?? [])];
+    for (const t of terms) {
+      if (t && t.trim()) {
+        out.push({ skill: s, term: t.trim(), caseSensitive: !!s.caseSensitive });
+      }
+    }
   }
+  // Longest term first so "Spring Boot" claims the span before "Spring".
+  out.sort((a, b) => b.term.length - a.term.length);
+  return out;
 }
-ALL_TERMS.sort((a, b) => b.term.length - a.term.length);
+
+// The active taxonomy is what extraction/display read. It starts as the
+// built-in set and can be replaced at runtime by the user's customizing.
+let activeTaxonomy: Skill[] = BUILTIN_TAXONOMY;
+let activeTerms: SkillTerm[] = buildTerms(BUILTIN_TAXONOMY);
+let activeById = new Map<string, Skill>(BUILTIN_TAXONOMY.map((s) => [s.id, s]));
+
+export function setActiveTaxonomy(taxonomy: Skill[]): void {
+  activeTaxonomy = taxonomy;
+  activeTerms = buildTerms(taxonomy);
+  activeById = new Map(taxonomy.map((s) => [s.id, s]));
+}
+
+export function getActiveTaxonomy(): Skill[] {
+  return activeTaxonomy;
+}
 
 export function allSkillTerms(): SkillTerm[] {
-  return ALL_TERMS;
+  return activeTerms;
 }
 
 export function skillById(id: string): Skill | undefined {
-  return TAXONOMY.find((s) => s.id === id);
+  return activeById.get(id);
 }

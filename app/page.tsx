@@ -8,7 +8,20 @@ import { extract } from "@/lib/extract";
 import { parsePdf } from "@/lib/parse";
 import { clearAll, deleteDoc, listDocs, putDoc } from "@/lib/storage";
 import { skillById } from "@/lib/taxonomy";
-import { CATEGORY_LABELS, type DocRecord, type DocType } from "@/lib/types";
+import { CustomizingPanel } from "./CustomizingPanel";
+import {
+  deleteSkill,
+  loadTaxonomy,
+  resetTaxonomy,
+  saveTaxonomy,
+  upsertSkill,
+} from "@/lib/customizing";
+import {
+  CATEGORY_LABELS,
+  type DocRecord,
+  type DocType,
+  type Skill,
+} from "@/lib/types";
 
 interface JobStatus {
   id: string;
@@ -38,15 +51,19 @@ export default function Home() {
   const [dragOver, setDragOver] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [taxonomy, setTaxonomy] = useState<Skill[]>([]);
+  const [showCust, setShowCust] = useState(false);
+  const [reanalyzing, setReanalyzing] = useState(false);
 
   useEffect(() => {
+    setTaxonomy(loadTaxonomy());
     listDocs().then((d) => {
       setDocs(d);
       setLoaded(true);
     });
   }, []);
 
-  const agg = useMemo(() => aggregate(docs), [docs]);
+  const agg = useMemo(() => aggregate(docs), [docs, taxonomy]);
 
   const processFiles = useCallback(async (files: File[]) => {
     const pdfFiles = files.filter(
@@ -166,6 +183,39 @@ export default function Home() {
     }
   }, [docs]);
 
+  // Re-run extraction on already-stored text (no PDF re-parsing) and persist.
+  const reanalyze = useCallback(async (current: DocRecord[]) => {
+    if (current.length === 0) return;
+    setReanalyzing(true);
+    try {
+      const updated = current.map((d) => ({ ...d, extraction: extract(d.text) }));
+      await Promise.all(updated.map((r) => putDoc(r)));
+      setDocs(updated);
+    } finally {
+      setReanalyzing(false);
+    }
+  }, []);
+
+  // Single mutation path: persist + activate + re-analyze open documents.
+  const applyTaxonomy = useCallback(
+    async (next: Skill[]) => {
+      saveTaxonomy(next);
+      setTaxonomy(next);
+      await reanalyze(docs);
+    },
+    [docs, reanalyze],
+  );
+
+  const onResetTaxonomy = useCallback(() => {
+    if (
+      !confirm(
+        "Customizing auf den Standard zurücksetzen? Eigene Einträge gehen verloren.",
+      )
+    )
+      return;
+    void applyTaxonomy(resetTaxonomy());
+  }, [applyTaxonomy]);
+
   const topSkills = agg.skillsTotal;
 
   return (
@@ -257,6 +307,13 @@ export default function Home() {
         <div className="flex gap-2">
           <button
             type="button"
+            onClick={() => setShowCust((v) => !v)}
+            className="px-4 py-2 rounded font-semibold text-sm border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            {showCust ? "Customizing schließen" : `Skills verwalten (${taxonomy.length})`}
+          </button>
+          <button
+            type="button"
             onClick={onExport}
             disabled={docs.length === 0 || exporting}
             className="px-4 py-2 rounded font-semibold text-sm bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -273,6 +330,18 @@ export default function Home() {
           </button>
         </div>
       </section>
+
+      {showCust && (
+        <CustomizingPanel
+          taxonomy={taxonomy}
+          reanalyzing={reanalyzing}
+          onUpsert={(input, editId) =>
+            void applyTaxonomy(upsertSkill(taxonomy, input, editId))
+          }
+          onDelete={(id) => void applyTaxonomy(deleteSkill(taxonomy, id))}
+          onReset={onResetTaxonomy}
+        />
+      )}
 
       {loaded && docs.length === 0 && jobs.length === 0 && (
         <p className="mt-10 text-center text-sm text-zinc-500">
