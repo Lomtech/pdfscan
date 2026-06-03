@@ -1,12 +1,16 @@
 "use client";
 
-import type { ModelOption } from "@/lib/ai";
+import type { AiProvider, ModelOption } from "@/lib/ai";
 
 export function AiPanel({
+  provider,
+  baseUrl,
   apiKey,
   model,
   modelOptions,
   modelsLoading,
+  onChangeProvider,
+  onChangeBaseUrl,
   onLoadModels,
   onChangeKey,
   onChangeModel,
@@ -21,10 +25,14 @@ export function AiPanel({
   pendingCount,
   totalDocs,
 }: {
+  provider: AiProvider;
+  baseUrl: string;
   apiKey: string;
   model: string;
   modelOptions: ModelOption[];
   modelsLoading: boolean;
+  onChangeProvider: (v: AiProvider) => void;
+  onChangeBaseUrl: (v: string) => void;
   onLoadModels: () => void;
   onChangeKey: (v: string) => void;
   onChangeModel: (v: string) => void;
@@ -42,6 +50,7 @@ export function AiPanel({
   const inputCls =
     "px-2 py-1.5 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm";
   const oldDocs = totalDocs - withBlobCount;
+  const ready = provider === "anthropic" ? !!apiKey.trim() : !!baseUrl.trim();
   // Custom only when the field is empty (user picked "Benutzerdefiniert") or the
   // model isn't in a loaded list. Before any list is loaded, show the current
   // model as the selected option (no stray custom input).
@@ -68,10 +77,33 @@ export function AiPanel({
       </div>
 
       <div className="px-4 py-3 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-zinc-500">Anbieter:</span>
+          <select
+            className={inputCls}
+            value={provider}
+            onChange={(e) => onChangeProvider(e.target.value as AiProvider)}
+          >
+            <option value="anthropic">Anthropic (Cloud)</option>
+            <option value="local">Lokal / VPC (Ollama · LM Studio · vLLM)</option>
+          </select>
+          {provider === "local" && (
+            <input
+              className={`${inputCls} flex-1 min-w-[260px]`}
+              placeholder="Base-URL (z. B. http://localhost:11434/v1)"
+              value={baseUrl}
+              onChange={(e) => onChangeBaseUrl(e.target.value)}
+            />
+          )}
+        </div>
         <input
           type="password"
           className={`${inputCls} w-full`}
-          placeholder="Anthropic API-Key (sk-ant-…)"
+          placeholder={
+            provider === "anthropic"
+              ? "Anthropic API-Key (sk-ant-…)"
+              : "API-Key / Token (optional bei lokal)"
+          }
           value={apiKey}
           onChange={(e) => onChangeKey(e.target.value)}
           autoComplete="off"
@@ -106,7 +138,7 @@ export function AiPanel({
           <button
             type="button"
             onClick={onLoadModels}
-            disabled={modelsLoading || !apiKey.trim()}
+            disabled={modelsLoading || !ready}
             title="Verfügbare Modelle aus der Anthropic-API laden"
             className="px-3 py-1.5 rounded text-sm border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -126,7 +158,7 @@ export function AiPanel({
         <button
           type="button"
           onClick={onRunAll}
-          disabled={busy || !apiKey.trim() || pendingCount === 0}
+          disabled={busy || !ready || pendingCount === 0}
           className="px-4 py-2 rounded font-semibold text-sm bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {busy

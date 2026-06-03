@@ -6,7 +6,13 @@ import { classify } from "@/lib/classify";
 import { buildAiWorkbook, buildWorkbook } from "@/lib/excel";
 import { extract } from "@/lib/extract";
 import { parsePdf } from "@/lib/parse";
-import { analyzeWithClaude, listModels, type ModelOption } from "@/lib/ai";
+import {
+  analyze,
+  listModels,
+  type AiConfig,
+  type AiProvider,
+  type ModelOption,
+} from "@/lib/ai";
 import { loadPdf } from "@/lib/pdf";
 import { renderPageImages } from "@/lib/ocr";
 import { AiPanel } from "./AiPanel";
@@ -61,6 +67,8 @@ export default function Home() {
   const [showAi, setShowAi] = useState(false);
   const [aiKey, setAiKey] = useState("");
   const [aiModel, setAiModel] = useState("claude-sonnet-4-5");
+  const [aiProvider, setAiProvider] = useState<AiProvider>("anthropic");
+  const [aiBaseUrl, setAiBaseUrl] = useState("http://localhost:11434/v1");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiProgress, setAiProgress] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
@@ -81,6 +89,12 @@ export default function Home() {
       setAiModel(
         localStorage.getItem("pdf-skill-extractor:aiModel") ||
           "claude-sonnet-4-5",
+      );
+      const prov = localStorage.getItem("pdf-skill-extractor:aiProvider");
+      if (prov === "local" || prov === "anthropic") setAiProvider(prov);
+      setAiBaseUrl(
+        localStorage.getItem("pdf-skill-extractor:aiBaseUrl") ||
+          "http://localhost:11434/v1",
       );
     } catch {
       /* ignore */
@@ -245,25 +259,44 @@ export default function Home() {
     void applyTaxonomy(resetTaxonomy());
   }, [applyTaxonomy]);
 
+  const aiCfg: AiConfig = useMemo(
+    () => ({
+      provider: aiProvider,
+      apiKey: aiKey.trim(),
+      model: aiModel.trim(),
+      baseUrl: aiBaseUrl.trim(),
+    }),
+    [aiProvider, aiKey, aiModel, aiBaseUrl],
+  );
+
   const saveAiSettings = useCallback(() => {
     try {
       localStorage.setItem("pdf-skill-extractor:aiKey", aiKey.trim());
       localStorage.setItem("pdf-skill-extractor:aiModel", aiModel.trim());
+      localStorage.setItem("pdf-skill-extractor:aiProvider", aiProvider);
+      localStorage.setItem("pdf-skill-extractor:aiBaseUrl", aiBaseUrl.trim());
     } catch {
       /* ignore */
     }
-  }, [aiKey, aiModel]);
+  }, [aiKey, aiModel, aiProvider, aiBaseUrl]);
+
+  const aiReady =
+    aiProvider === "anthropic" ? !!aiKey.trim() : !!aiBaseUrl.trim();
 
   const loadModels = useCallback(
     async (silent = false) => {
-      if (!aiKey.trim()) {
-        if (!silent) alert("Bitte zuerst den API-Key eintragen.");
+      if (!aiReady) {
+        if (!silent)
+          alert(
+            aiProvider === "anthropic"
+              ? "Bitte zuerst den API-Key eintragen."
+              : "Bitte zuerst die Base-URL eintragen.",
+          );
         return;
       }
       setModelsLoading(true);
       try {
-        const models = await listModels(aiKey.trim());
-        // Newest first (API returns newest first already); keep as-is.
+        const models = await listModels(aiCfg);
         setModelOptions(models);
         if (!silent) showToast(`${models.length} Modelle geladen`);
       } catch (e) {
@@ -272,20 +305,32 @@ export default function Home() {
         setModelsLoading(false);
       }
     },
-    [aiKey, showToast],
+    [aiCfg, aiReady, aiProvider, showToast],
   );
 
-  // Auto-load the model list when the panel opens with a key present.
+  // Reset the model list when switching provider/endpoint.
   useEffect(() => {
-    if (showAi && aiKey.trim() && modelOptions.length === 0 && !modelsLoading) {
+    setModelOptions([]);
+  }, [aiProvider, aiBaseUrl]);
+
+  // Auto-load models when the panel opens and the provider is configured.
+  useEffect(() => {
+    if (showAi && aiReady && modelOptions.length === 0 && !modelsLoading) {
       void loadModels(true);
     }
-  }, [showAi, aiKey, modelOptions.length, modelsLoading, loadModels]);
+  }, [showAi, aiReady, modelOptions.length, modelsLoading, loadModels]);
 
   const runAiAll = useCallback(async () => {
-    const cfg = { apiKey: aiKey.trim(), model: aiModel.trim() };
-    if (!cfg.apiKey) {
-      alert("Bitte zuerst den Anthropic API-Key eintragen.");
+    if (!aiReady) {
+      alert(
+        aiProvider === "anthropic"
+          ? "Bitte zuerst den Anthropic API-Key eintragen."
+          : "Bitte zuerst die Base-URL des lokalen Modells eintragen.",
+      );
+      return;
+    }
+    if (!aiCfg.model) {
+      alert("Bitte ein Modell auswählen.");
       return;
     }
     // Resumable: only docs that have stored PDF data and aren't analyzed yet.
@@ -313,7 +358,7 @@ export default function Home() {
           } finally {
             await destroy();
           }
-          const ai = await analyzeWithClaude(images, cfg, (sec, attempt) =>
+          const ai = await analyze(images, aiCfg, (sec, attempt) =>
             setAiProgress(
               `${i + 1}/${targets.length}: ${d.name} – Rate-Limit, warte ${sec}s… (Versuch ${attempt})`,
             ),
@@ -337,7 +382,7 @@ export default function Home() {
     } finally {
       setAiBusy(false);
     }
-  }, [docs, aiKey, aiModel, saveAiSettings]);
+  }, [docs, aiCfg, aiReady, aiProvider, saveAiSettings]);
 
   const downloadAiJson = useCallback(() => {
     const payload = docs
@@ -522,20 +567,20 @@ export default function Home() {
 
       {showAi && (
         <AiPanel
+          provider={aiProvider}
+          baseUrl={aiBaseUrl}
           apiKey={aiKey}
           model={aiModel}
           modelOptions={modelOptions}
           modelsLoading={modelsLoading}
+          onChangeProvider={setAiProvider}
+          onChangeBaseUrl={setAiBaseUrl}
           onLoadModels={() => void loadModels(false)}
           onChangeKey={setAiKey}
           onChangeModel={setAiModel}
           onSave={() => {
             saveAiSettings();
-            showToast(
-              aiKey.trim()
-                ? "API-Key & Modell gespeichert"
-                : "Modell gespeichert (kein Key hinterlegt)",
-            );
+            showToast("Einstellungen gespeichert");
           }}
           onRunAll={runAiAll}
           onDownload={downloadAiJson}
