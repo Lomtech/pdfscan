@@ -1,8 +1,13 @@
 "use client";
 
+import type { ModelOption } from "@/lib/ai";
+
 export function AiPanel({
   apiKey,
   model,
+  modelOptions,
+  modelsLoading,
+  onLoadModels,
   onChangeKey,
   onChangeModel,
   onSave,
@@ -18,6 +23,9 @@ export function AiPanel({
 }: {
   apiKey: string;
   model: string;
+  modelOptions: ModelOption[];
+  modelsLoading: boolean;
+  onLoadModels: () => void;
   onChangeKey: (v: string) => void;
   onChangeModel: (v: string) => void;
   onSave: () => void;
@@ -34,6 +42,12 @@ export function AiPanel({
   const inputCls =
     "px-2 py-1.5 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm";
   const oldDocs = totalDocs - withBlobCount;
+  // Custom only when the field is empty (user picked "Benutzerdefiniert") or the
+  // model isn't in a loaded list. Before any list is loaded, show the current
+  // model as the selected option (no stray custom input).
+  const isCustomModel =
+    model === "" ||
+    (modelOptions.length > 0 && !modelOptions.some((o) => o.id === model));
 
   return (
     <section className="mt-6 rounded-lg border border-violet-200 dark:border-violet-900 bg-violet-50/40 dark:bg-violet-950/20">
@@ -53,29 +67,59 @@ export function AiPanel({
         </p>
       </div>
 
-      <div className="px-4 py-3 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+      <div className="px-4 py-3 space-y-2">
         <input
           type="password"
-          className={inputCls}
+          className={`${inputCls} w-full`}
           placeholder="Anthropic API-Key (sk-ant-…)"
           value={apiKey}
           onChange={(e) => onChangeKey(e.target.value)}
           autoComplete="off"
         />
-        <input
-          className={inputCls}
-          placeholder="Modell"
-          value={model}
-          onChange={(e) => onChangeModel(e.target.value)}
-          title="z. B. claude-sonnet-4-5 — Modellnamen siehe Anthropic-Doku"
-        />
-        <button
-          type="button"
-          onClick={onSave}
-          className="px-3 py-1.5 rounded text-sm border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          Key speichern
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-zinc-500">Modell:</span>
+          <select
+            className={inputCls}
+            value={isCustomModel ? "__custom__" : model}
+            onChange={(e) =>
+              onChangeModel(e.target.value === "__custom__" ? "" : e.target.value)
+            }
+          >
+            {modelOptions.length === 0 && model && (
+              <option value={model}>{model}</option>
+            )}
+            {modelOptions.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name === o.id ? o.id : `${o.name} — ${o.id}`}
+              </option>
+            ))}
+            <option value="__custom__">Benutzerdefiniert…</option>
+          </select>
+          {isCustomModel && (
+            <input
+              className={`${inputCls} flex-1 min-w-[220px]`}
+              placeholder="Modell-ID (z. B. claude-haiku-4-5)"
+              value={model}
+              onChange={(e) => onChangeModel(e.target.value)}
+            />
+          )}
+          <button
+            type="button"
+            onClick={onLoadModels}
+            disabled={modelsLoading || !apiKey.trim()}
+            title="Verfügbare Modelle aus der Anthropic-API laden"
+            className="px-3 py-1.5 rounded text-sm border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {modelsLoading ? "lädt…" : "↻ Modelle laden"}
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            className="px-3 py-1.5 rounded text-sm border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            Key speichern
+          </button>
+        </div>
       </div>
 
       <div className="px-4 pb-3 flex flex-wrap items-center gap-3">

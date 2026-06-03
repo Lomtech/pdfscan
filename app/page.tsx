@@ -6,7 +6,7 @@ import { classify } from "@/lib/classify";
 import { buildAiWorkbook, buildWorkbook } from "@/lib/excel";
 import { extract } from "@/lib/extract";
 import { parsePdf } from "@/lib/parse";
-import { analyzeWithClaude } from "@/lib/ai";
+import { analyzeWithClaude, listModels, type ModelOption } from "@/lib/ai";
 import { loadPdf } from "@/lib/pdf";
 import { renderPageImages } from "@/lib/ocr";
 import { AiPanel } from "./AiPanel";
@@ -63,6 +63,8 @@ export default function Home() {
   const [aiModel, setAiModel] = useState("claude-sonnet-4-5");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiProgress, setAiProgress] = useState("");
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
   const [toast, setToast] = useState<{ id: number; msg: string } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -251,6 +253,34 @@ export default function Home() {
       /* ignore */
     }
   }, [aiKey, aiModel]);
+
+  const loadModels = useCallback(
+    async (silent = false) => {
+      if (!aiKey.trim()) {
+        if (!silent) alert("Bitte zuerst den API-Key eintragen.");
+        return;
+      }
+      setModelsLoading(true);
+      try {
+        const models = await listModels(aiKey.trim());
+        // Newest first (API returns newest first already); keep as-is.
+        setModelOptions(models);
+        if (!silent) showToast(`${models.length} Modelle geladen`);
+      } catch (e) {
+        if (!silent) showToast((e as Error).message);
+      } finally {
+        setModelsLoading(false);
+      }
+    },
+    [aiKey, showToast],
+  );
+
+  // Auto-load the model list when the panel opens with a key present.
+  useEffect(() => {
+    if (showAi && aiKey.trim() && modelOptions.length === 0 && !modelsLoading) {
+      void loadModels(true);
+    }
+  }, [showAi, aiKey, modelOptions.length, modelsLoading, loadModels]);
 
   const runAiAll = useCallback(async () => {
     const cfg = { apiKey: aiKey.trim(), model: aiModel.trim() };
@@ -494,6 +524,9 @@ export default function Home() {
         <AiPanel
           apiKey={aiKey}
           model={aiModel}
+          modelOptions={modelOptions}
+          modelsLoading={modelsLoading}
+          onLoadModels={() => void loadModels(false)}
           onChangeKey={setAiKey}
           onChangeModel={setAiModel}
           onSave={() => {

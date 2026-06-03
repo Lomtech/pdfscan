@@ -3,10 +3,41 @@
 import type { AiResult, AiSkill } from "./types";
 
 const ENDPOINT = "https://api.anthropic.com/v1/messages";
+const MODELS_ENDPOINT = "https://api.anthropic.com/v1/models?limit=1000";
 
 export interface AiConfig {
   apiKey: string;
   model: string;
+}
+
+export interface ModelOption {
+  id: string;
+  name: string;
+}
+
+/** Fetch the exact list of models available to this API key. */
+export async function listModels(apiKey: string): Promise<ModelOption[]> {
+  const res = await fetch(MODELS_ENDPOINT, {
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+  });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const err = await res.json();
+      detail = err?.error?.message ?? "";
+    } catch {
+      /* ignore */
+    }
+    throw new Error(`Modelle laden fehlgeschlagen (${res.status})${detail ? ": " + detail : ""}`);
+  }
+  const data = await res.json();
+  return ((data?.data ?? []) as { id: string; display_name?: string }[])
+    .filter((m) => typeof m.id === "string")
+    .map((m) => ({ id: m.id, name: m.display_name ?? m.id }));
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
