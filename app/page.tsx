@@ -317,16 +317,18 @@ export default function Home() {
     [aiCfg, aiReady, aiProvider, showToast],
   );
 
-  // Reset the model list when switching provider/endpoint.
+  // Reset the model list when switching provider/endpoint (allow a fresh
+  // auto-load attempt for the new provider).
   useEffect(() => {
     setModelOptions([]);
     setModelsError("");
+    autoTriedRef.current = "";
   }, [aiProvider, aiBaseUrl]);
 
-  // Auto-load models once per config (provider+url+key). Guarded so a failing
-  // endpoint doesn't loop and flood the network with retries.
+  // Auto-load models once per provider/endpoint. Guarded by a signature so a
+  // failing endpoint doesn't loop, but a provider switch re-attempts.
   useEffect(() => {
-    const sig = `${aiProvider}|${aiBaseUrl}|${aiKey}`;
+    const sig = `${aiProvider}|${aiBaseUrl}`;
     if (
       showAi &&
       aiReady &&
@@ -347,6 +349,13 @@ export default function Home() {
     modelsLoading,
     loadModels,
   ]);
+
+  // Self-heal: when a model list loads and no model is selected, pick the first.
+  useEffect(() => {
+    if (modelOptions.length > 0) {
+      setAiModel((prev) => (prev.trim() ? prev : modelOptions[0].id));
+    }
+  }, [modelOptions]);
 
   const runAiAll = useCallback(async () => {
     if (!aiReady) {
