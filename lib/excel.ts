@@ -5,27 +5,64 @@ import { aggregate, type SkillStat } from "./aggregate";
 import { skillById } from "./taxonomy";
 import { CATEGORY_LABELS, type DocRecord } from "./types";
 
-function autoWidth(ws: ExcelJS.Worksheet) {
+const THIN: Partial<ExcelJS.Border> = {
+  style: "thin",
+  color: { argb: "FFD9DCE1" },
+};
+
+function autoWidth(ws: ExcelJS.Worksheet, max = 60) {
   ws.columns.forEach((col) => {
-    let max = 10;
+    let w = 10;
     col.eachCell?.({ includeEmpty: false }, (cell) => {
       const v = String(cell.value ?? "");
-      if (v.length > max) max = Math.min(v.length, 60);
+      if (v.length > w) w = Math.min(v.length, max);
     });
-    col.width = max + 2;
+    col.width = w + 2;
   });
 }
 
-function styleHeader(row: ExcelJS.Row) {
-  row.eachCell((cell) => {
+/**
+ * Apply the standard look to a finished sheet: dark header, frozen header row,
+ * thin borders, wrapped + top-aligned body cells, auto-filter. Call AFTER all
+ * rows are added. `center` lists 1-based column indexes to center horizontally.
+ */
+function styleSheet(
+  ws: ExcelJS.Worksheet,
+  opts: { center?: number[]; widthCap?: number } = {},
+) {
+  autoWidth(ws, opts.widthCap ?? 60);
+  const center = new Set(opts.center ?? []);
+
+  const header = ws.getRow(1);
+  header.height = 22;
+  header.eachCell((cell) => {
     cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
     cell.fill = {
       type: "pattern",
       pattern: "solid",
       fgColor: { argb: "FF1F2937" },
     };
-    cell.alignment = { vertical: "middle", horizontal: "left" };
+    cell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
+    cell.border = { bottom: { style: "thin", color: { argb: "FF111827" } } };
   });
+
+  ws.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return;
+    row.eachCell((cell, colNumber) => {
+      cell.border = { top: THIN, left: THIN, bottom: THIN, right: THIN };
+      cell.alignment = {
+        vertical: "top",
+        wrapText: true,
+        horizontal: center.has(colNumber) ? "center" : "left",
+      };
+    });
+  });
+
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+  ws.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: ws.columnCount },
+  };
 }
 
 function fillSkillSheet(ws: ExcelJS.Worksheet, stats: SkillStat[]) {
@@ -36,7 +73,6 @@ function fillSkillSheet(ws: ExcelJS.Worksheet, stats: SkillStat[]) {
     { header: "In Dokumenten", key: "docCount" },
     { header: "Dokumente", key: "inDocs" },
   ];
-  styleHeader(ws.getRow(1));
   for (const s of stats) {
     ws.addRow({
       label: s.label,
@@ -46,8 +82,7 @@ function fillSkillSheet(ws: ExcelJS.Worksheet, stats: SkillStat[]) {
       inDocs: s.inDocs.join("; "),
     });
   }
-  autoWidth(ws);
-  ws.views = [{ state: "frozen", ySplit: 1 }];
+  styleSheet(ws, { center: [3, 4] });
 }
 
 export async function buildWorkbook(docs: DocRecord[]): Promise<Blob> {
@@ -69,7 +104,6 @@ export async function buildWorkbook(docs: DocRecord[]): Promise<Blob> {
     { header: "Ausbildung", key: "education" },
     { header: "Größe (KB)", key: "kb" },
   ];
-  styleHeader(overview.getRow(1));
   for (const d of docs) {
     const topSkills = d.extraction.skills
       .slice(0, 8)
@@ -93,9 +127,8 @@ export async function buildWorkbook(docs: DocRecord[]): Promise<Blob> {
     name: `Σ ${agg.totalDocs} Dokumente`,
     type: `${agg.jdCount} JD / ${agg.cvCount} CV / ${agg.unknownCount} ?`,
   });
+  styleSheet(overview, { center: [3, 4, 5, 9] });
   sumRow.font = { bold: true };
-  autoWidth(overview);
-  overview.views = [{ state: "frozen", ySplit: 1 }];
 
   // Sheet 2-4: Skill rollups
   fillSkillSheet(wb.addWorksheet("Skills gesamt"), agg.skillsTotal);
@@ -111,7 +144,6 @@ export async function buildWorkbook(docs: DocRecord[]): Promise<Blob> {
     { header: "Kategorie", key: "category" },
     { header: "Treffer", key: "count" },
   ];
-  styleHeader(detail.getRow(1));
   for (const d of docs) {
     for (const h of d.extraction.skills) {
       const s = skillById(h.skillId);
@@ -125,9 +157,7 @@ export async function buildWorkbook(docs: DocRecord[]): Promise<Blob> {
       });
     }
   }
-  autoWidth(detail);
-  detail.views = [{ state: "frozen", ySplit: 1 }];
-  detail.autoFilter = { from: "A1", to: "E1" };
+  styleSheet(detail, { center: [5] });
 
   const buf = await wb.xlsx.writeBuffer();
   return new Blob([buf], {
