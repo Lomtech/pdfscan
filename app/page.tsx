@@ -314,6 +314,15 @@ export default function Home() {
           </button>
           <button
             type="button"
+            onClick={() => void reanalyze(docs)}
+            disabled={docs.length === 0 || reanalyzing}
+            title="Alle Dokumente mit der aktuellen Skill-Liste neu auswerten (ohne erneuten Upload)"
+            className="px-4 py-2 rounded font-semibold text-sm border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {reanalyzing ? "Werte neu aus…" : "Erneut auswerten"}
+          </button>
+          <button
+            type="button"
             onClick={onExport}
             disabled={docs.length === 0 || exporting}
             className="px-4 py-2 rounded font-semibold text-sm bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed"
