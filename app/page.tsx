@@ -73,6 +73,8 @@ export default function Home() {
   const [aiProgress, setAiProgress] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState("");
+  const autoTriedRef = useRef("");
   const [toast, setToast] = useState<{ id: number; msg: string } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -295,12 +297,19 @@ export default function Home() {
         return;
       }
       setModelsLoading(true);
+      setModelsError("");
       try {
         const models = await listModels(aiCfg);
         setModelOptions(models);
         if (!silent) showToast(`${models.length} Modelle geladen`);
       } catch (e) {
-        if (!silent) showToast((e as Error).message);
+        const raw = (e as Error).message || "unbekannter Fehler";
+        const msg =
+          aiProvider === "local"
+            ? `Endpoint nicht erreichbar (${raw}). Tipp: App lokal betreiben & Ollama mit OLLAMA_ORIGINS starten.`
+            : raw;
+        setModelsError(msg);
+        if (!silent) showToast(msg);
       } finally {
         setModelsLoading(false);
       }
@@ -311,14 +320,33 @@ export default function Home() {
   // Reset the model list when switching provider/endpoint.
   useEffect(() => {
     setModelOptions([]);
+    setModelsError("");
   }, [aiProvider, aiBaseUrl]);
 
-  // Auto-load models when the panel opens and the provider is configured.
+  // Auto-load models once per config (provider+url+key). Guarded so a failing
+  // endpoint doesn't loop and flood the network with retries.
   useEffect(() => {
-    if (showAi && aiReady && modelOptions.length === 0 && !modelsLoading) {
+    const sig = `${aiProvider}|${aiBaseUrl}|${aiKey}`;
+    if (
+      showAi &&
+      aiReady &&
+      modelOptions.length === 0 &&
+      !modelsLoading &&
+      autoTriedRef.current !== sig
+    ) {
+      autoTriedRef.current = sig;
       void loadModels(true);
     }
-  }, [showAi, aiReady, modelOptions.length, modelsLoading, loadModels]);
+  }, [
+    showAi,
+    aiReady,
+    aiProvider,
+    aiBaseUrl,
+    aiKey,
+    modelOptions.length,
+    modelsLoading,
+    loadModels,
+  ]);
 
   const runAiAll = useCallback(async () => {
     if (!aiReady) {
@@ -573,6 +601,7 @@ export default function Home() {
           model={aiModel}
           modelOptions={modelOptions}
           modelsLoading={modelsLoading}
+          modelsError={modelsError}
           onChangeProvider={setAiProvider}
           onChangeBaseUrl={setAiBaseUrl}
           onLoadModels={() => void loadModels(false)}

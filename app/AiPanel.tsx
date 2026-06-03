@@ -9,6 +9,7 @@ export function AiPanel({
   model,
   modelOptions,
   modelsLoading,
+  modelsError,
   onChangeProvider,
   onChangeBaseUrl,
   onLoadModels,
@@ -31,6 +32,7 @@ export function AiPanel({
   model: string;
   modelOptions: ModelOption[];
   modelsLoading: boolean;
+  modelsError: string;
   onChangeProvider: (v: AiProvider) => void;
   onChangeBaseUrl: (v: string) => void;
   onLoadModels: () => void;
@@ -51,6 +53,13 @@ export function AiPanel({
     "px-2 py-1.5 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm";
   const oldDocs = totalDocs - withBlobCount;
   const ready = provider === "anthropic" ? !!apiKey.trim() : !!baseUrl.trim();
+  const remoteOrigin =
+    typeof window !== "undefined" &&
+    !/^(localhost|127\.0\.0\.1|\[::1\])/.test(window.location.hostname);
+  const localEndpointOnRemote =
+    provider === "local" &&
+    remoteOrigin &&
+    /localhost|127\.0\.0\.1/.test(baseUrl);
   // Custom only when the field is empty (user picked "Benutzerdefiniert") or the
   // model isn't in a loaded list. Before any list is loaded, show the current
   // model as the selected option (no stray custom input).
@@ -178,6 +187,16 @@ export function AiPanel({
             Key speichern
           </button>
         </div>
+        {localEndpointOnRemote && (
+          <p className="text-xs text-amber-600">
+            ⚠️ Souverän mit localhost-Endpoint geht nur, wenn die App selbst
+            lokal läuft – nicht über diese öffentliche URL. Repo lokal starten
+            („npm run dev" → http://localhost:3035) oder intern hosten.
+          </p>
+        )}
+        {modelsError && (
+          <p className="text-xs text-red-600 break-words">{modelsError}</p>
+        )}
       </div>
 
       <div className="px-4 pb-3 flex flex-wrap items-center gap-3">
