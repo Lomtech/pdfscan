@@ -166,7 +166,7 @@ export default function Home() {
     }
   }, [docs]);
 
-  const topSkills = agg.skillsTotal.slice(0, 12);
+  const topSkills = agg.skillsTotal;
 
   return (
     <main className="flex-1 w-full max-w-6xl mx-auto px-6 py-10">
@@ -331,7 +331,10 @@ export default function Home() {
           </div>
           <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
             <h2 className="px-4 py-3 font-semibold border-b border-zinc-200 dark:border-zinc-800 text-sm">
-              Top-Skills im Stapel
+              Alle Skills im Stapel{" "}
+              <span className="font-normal text-zinc-500">
+                ({topSkills.length})
+              </span>
             </h2>
             {topSkills.length === 0 ? (
               <p className="px-4 py-3 text-sm text-zinc-500">
