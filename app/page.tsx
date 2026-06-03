@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { aggregate } from "@/lib/aggregate";
 import { classify } from "@/lib/classify";
 import { buildWorkbook } from "@/lib/excel";
@@ -63,6 +63,14 @@ export default function Home() {
   const [aiModel, setAiModel] = useState("claude-sonnet-4-5");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiProgress, setAiProgress] = useState("");
+  const [toast, setToast] = useState<{ id: number; msg: string } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ id: Date.now(), msg });
+    toastTimer.current = setTimeout(() => setToast(null), 2600);
+  }, []);
 
   useEffect(() => {
     setTaxonomy(loadTaxonomy());
@@ -456,7 +464,14 @@ export default function Home() {
           model={aiModel}
           onChangeKey={setAiKey}
           onChangeModel={setAiModel}
-          onSave={saveAiSettings}
+          onSave={() => {
+            saveAiSettings();
+            showToast(
+              aiKey.trim()
+                ? "API-Key & Modell gespeichert"
+                : "Modell gespeichert (kein Key hinterlegt)",
+            );
+          }}
           onRunAll={runAiAll}
           onDownload={downloadAiJson}
           busy={aiBusy}
@@ -590,6 +605,20 @@ export default function Home() {
         Daten liegen ausschließlich lokal im Browser (IndexedDB). Excel-Export
         nutzt ExcelJS, PDF-Parsing pdf.js.
       </footer>
+
+      {toast && (
+        <div
+          key={toast.id}
+          role="status"
+          aria-live="polite"
+          className="toast-enter fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-4 py-3 shadow-xl"
+        >
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white text-sm">
+            ✓
+          </span>
+          <span className="text-sm font-medium pr-1">{toast.msg}</span>
+        </div>
+      )}
     </main>
   );
 }
