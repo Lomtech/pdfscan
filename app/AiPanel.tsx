@@ -8,6 +8,7 @@ export function AiPanel({
   onSave,
   onRunAll,
   onDownload,
+  onDownloadExcel,
   busy,
   progress,
   analyzedCount,
@@ -21,6 +22,7 @@ export function AiPanel({
   onSave: () => void;
   onRunAll: () => void;
   onDownload: () => void;
+  onDownloadExcel: () => void;
   busy: boolean;
   progress: string;
   analyzedCount: number;
@@ -82,6 +84,14 @@ export function AiPanel({
           className="px-4 py-2 rounded font-semibold text-sm bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {busy ? "Analysiere…" : `Alle analysieren (${withBlobCount})`}
+        </button>
+        <button
+          type="button"
+          onClick={onDownloadExcel}
+          disabled={analyzedCount === 0}
+          className="px-4 py-2 rounded font-semibold text-sm bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          KI-Excel herunterladen
         </button>
         <button
           type="button"

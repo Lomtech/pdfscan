@@ -164,3 +164,133 @@ export async function buildWorkbook(docs: DocRecord[]): Promise<Blob> {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
 }
+
+const XLSX_MIME =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+function avg(nums: number[]): number | "" {
+  if (nums.length === 0) return "";
+  return Math.round((nums.reduce((a, b) => a + b, 0) / nums.length) * 10) / 10;
+}
+
+/** Excel built from the Claude-vision results (skills WITH levels). */
+export async function buildAiWorkbook(docs: DocRecord[]): Promise<Blob> {
+  const withAi = docs.filter((d) => d.ai);
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "PDF Skill Extractor";
+  wb.created = new Date();
+
+  // Sheet 1: per-document overview
+  const ov = wb.addWorksheet("KI-Übersicht");
+  ov.columns = [
+    { header: "Dokument", key: "name" },
+    { header: "Rolle", key: "role" },
+    { header: "Doktyp", key: "type" },
+    { header: "Skills", key: "n" },
+    { header: "davon Pflicht", key: "req" },
+    { header: "mit Level", key: "lvl" },
+    { header: "Ø Level", key: "avgLvl" },
+    { header: "Modell", key: "model" },
+  ];
+  for (const d of withAi) {
+    const sk = d.ai!.skills;
+    const levels = sk
+      .map((s) => s.level)
+      .filter((x): x is number => x != null);
+    ov.addRow({
+      name: d.name,
+      role: d.ai!.roleTitle ?? "",
+      type: d.ai!.docType ?? "",
+      n: sk.length,
+      req: sk.filter((s) => s.required === true).length,
+      lvl: levels.length,
+      avgLvl: avg(levels),
+      model: d.ai!.model,
+    });
+  }
+  styleSheet(ov, { center: [4, 5, 6, 7] });
+
+  // Sheet 2: aggregated skills across all documents (the analysis)
+  interface Agg {
+    name: string;
+    cats: Map<string, number>;
+    docs: Set<string>;
+    count: number;
+    levels: number[];
+    required: number;
+  }
+  const byName = new Map<string, Agg>();
+  for (const d of withAi) {
+    for (const s of d.ai!.skills) {
+      const key = s.name.toLowerCase().trim();
+      if (!key) continue;
+      let e = byName.get(key);
+      if (!e) {
+        e = { name: s.name, cats: new Map(), docs: new Set(), count: 0, levels: [], required: 0 };
+        byName.set(key, e);
+      }
+      e.count += 1;
+      e.docs.add(d.name);
+      if (s.category) e.cats.set(s.category, (e.cats.get(s.category) ?? 0) + 1);
+      if (s.level != null) e.levels.push(s.level);
+      if (s.required === true) e.required += 1;
+    }
+  }
+  const aggSheet = wb.addWorksheet("KI-Skills (aggregiert)");
+  aggSheet.columns = [
+    { header: "Skill", key: "name" },
+    { header: "Kategorie", key: "cat" },
+    { header: "In Dokumenten", key: "docs" },
+    { header: "Nennungen", key: "count" },
+    { header: "Ø Level", key: "avgLvl" },
+    { header: "Max Level", key: "maxLvl" },
+    { header: "Pflicht (Anzahl)", key: "req" },
+  ];
+  const aggRows = [...byName.values()].sort(
+    (a, b) =>
+      b.docs.size - a.docs.size ||
+      b.count - a.count ||
+      a.name.localeCompare(b.name),
+  );
+  for (const e of aggRows) {
+    const topCat =
+      [...e.cats.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+    aggSheet.addRow({
+      name: e.name,
+      cat: topCat,
+      docs: e.docs.size,
+      count: e.count,
+      avgLvl: avg(e.levels),
+      maxLvl: e.levels.length ? Math.max(...e.levels) : "",
+      req: e.required,
+    });
+  }
+  styleSheet(aggSheet, { center: [3, 4, 5, 6, 7] });
+
+  // Sheet 3: long-format detail (one row per doc × skill)
+  const det = wb.addWorksheet("KI Pro Dokument");
+  det.columns = [
+    { header: "Dokument", key: "doc" },
+    { header: "Skill", key: "skill" },
+    { header: "Kategorie", key: "cat" },
+    { header: "Level", key: "level" },
+    { header: "Max", key: "max" },
+    { header: "Pflicht", key: "req" },
+  ];
+  for (const d of withAi) {
+    for (const s of d.ai!.skills) {
+      det.addRow({
+        doc: d.name,
+        skill: s.name,
+        cat: s.category ?? "",
+        level: s.level ?? "",
+        max: s.levelMax ?? "",
+        req: s.required == null ? "" : s.required ? "ja" : "nein",
+      });
+    }
+  }
+  styleSheet(det, { center: [4, 5, 6] });
+
+  const buf = await wb.xlsx.writeBuffer();
+  return new Blob([buf], { type: XLSX_MIME });
+}

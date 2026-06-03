@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { aggregate } from "@/lib/aggregate";
 import { classify } from "@/lib/classify";
-import { buildWorkbook } from "@/lib/excel";
+import { buildAiWorkbook, buildWorkbook } from "@/lib/excel";
 import { extract } from "@/lib/extract";
 import { parsePdf } from "@/lib/parse";
 import { analyzeWithClaude } from "@/lib/ai";
@@ -318,6 +318,20 @@ export default function Home() {
     URL.revokeObjectURL(url);
   }, [docs]);
 
+  const downloadAiExcel = useCallback(async () => {
+    if (docs.filter((d) => d.ai).length === 0) return;
+    const blob = await buildAiWorkbook(docs);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const ts = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+    a.href = url;
+    a.download = `ki-skills-${ts}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, [docs]);
+
   const aiAnalyzedCount = useMemo(
     () => docs.filter((d) => d.ai).length,
     [docs],
@@ -474,6 +488,7 @@ export default function Home() {
           }}
           onRunAll={runAiAll}
           onDownload={downloadAiJson}
+          onDownloadExcel={downloadAiExcel}
           busy={aiBusy}
           progress={aiProgress}
           analyzedCount={aiAnalyzedCount}
