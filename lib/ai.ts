@@ -2,16 +2,12 @@
 
 import type { AiResult, AiSkill } from "./types";
 
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-const ANTHROPIC_MODELS = "https://api.anthropic.com/v1/models?limit=1000";
-
-export type AiProvider = "anthropic" | "local";
+const ENDPOINT = "https://api.anthropic.com/v1/messages";
+const MODELS_ENDPOINT = "https://api.anthropic.com/v1/models?limit=1000";
 
 export interface AiConfig {
-  provider: AiProvider;
-  apiKey: string; // Anthropic key, or optional bearer token for a local server
+  apiKey: string;
   model: string;
-  baseUrl: string; // local only, e.g. http://localhost:11434/v1
 }
 
 export interface ModelOption {
@@ -34,16 +30,7 @@ Antworte mit GENAU EINEM JSON-Objekt, KEIN weiterer Text, KEIN Markdown:
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function trimSlash(u: string): string {
-  return u.replace(/\/+$/, "");
-}
-
-function stripDataUrl(dataUrl: string): string {
-  const i = dataUrl.indexOf(",");
-  return i >= 0 ? dataUrl.slice(i + 1) : dataUrl;
-}
-
-function anthropicHeaders(apiKey: string): Record<string, string> {
+function headers(apiKey: string): Record<string, string> {
   return {
     "x-api-key": apiKey,
     "anthropic-version": "2023-06-01",
@@ -51,10 +38,15 @@ function anthropicHeaders(apiKey: string): Record<string, string> {
   };
 }
 
+function stripDataUrl(dataUrl: string): string {
+  const i = dataUrl.indexOf(",");
+  return i >= 0 ? dataUrl.slice(i + 1) : dataUrl;
+}
+
 async function errorDetail(res: Response): Promise<string> {
   try {
     const err = await res.json();
-    return err?.error?.message ?? (typeof err?.error === "string" ? err.error : "");
+    return err?.error?.message ?? "";
   } catch {
     return (await res.text().catch(() => "")) || res.statusText;
   }
@@ -94,33 +86,22 @@ function coerceSkills(raw: unknown): AiSkill[] {
     .filter((s): s is AiSkill => s !== null);
 }
 
-function buildResult(text: string, model: string): AiResult {
-  const parsed = extractJson(text) as Record<string, unknown>;
-  return {
-    roleTitle: typeof parsed.roleTitle === "string" ? parsed.roleTitle : null,
-    docType: typeof parsed.docType === "string" ? parsed.docType : null,
-    skills: coerceSkills(parsed),
-    model,
-    at: Date.now(),
-  };
-}
-
-// Generic POST with retry on rate-limit / overload (429/529/503).
+// Retry on 429 (rate limit) / 529 (overloaded), honoring retry-after.
 async function postWithRetry(
-  url: string,
-  headers: Record<string, string>,
+  apiKey: string,
   body: string,
   onWait?: (seconds: number, attempt: number) => void,
   maxRetries = 5,
 ): Promise<Response> {
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, {
+    const res = await fetch(ENDPOINT, {
       method: "POST",
-      headers: { "content-type": "application/json", ...headers },
+      headers: { "content-type": "application/json", ...headers(apiKey) },
       body,
     });
-    const retryable = res.status === 429 || res.status === 529 || res.status === 503;
-    if (!retryable || attempt >= maxRetries) return res;
+    if ((res.status !== 429 && res.status !== 529) || attempt >= maxRetries) {
+      return res;
+    }
     const ra = parseFloat(res.headers.get("retry-after") ?? "");
     const waitMs =
       Number.isFinite(ra) && ra > 0 ? ra * 1000 : Math.min(2000 * 2 ** attempt, 32000);
@@ -129,10 +110,11 @@ async function postWithRetry(
   }
 }
 
-async function analyzeAnthropic(
+/** Analyze rendered page images with Claude vision → structured skills. */
+export async function analyze(
   images: string[],
   cfg: AiConfig,
-  onWait?: (s: number, a: number) => void,
+  onWait?: (seconds: number, attempt: number) => void,
 ): Promise<AiResult> {
   const content: unknown[] = [{ type: "text", text: PROMPT }];
   for (const img of images) {
@@ -142,8 +124,7 @@ async function analyzeAnthropic(
     });
   }
   const res = await postWithRetry(
-    ANTHROPIC_URL,
-    anthropicHeaders(cfg.apiKey),
+    cfg.apiKey,
     JSON.stringify({ model: cfg.model, max_tokens: 4096, messages: [{ role: "user", content }] }),
     onWait,
   );
@@ -153,110 +134,19 @@ async function analyzeAnthropic(
     .filter((b: { type?: string }) => b?.type === "text")
     .map((b: { text?: string }) => b.text ?? "")
     .join("");
-  return buildResult(text, cfg.model);
+  const parsed = extractJson(text) as Record<string, unknown>;
+  return {
+    roleTitle: typeof parsed.roleTitle === "string" ? parsed.roleTitle : null,
+    docType: typeof parsed.docType === "string" ? parsed.docType : null,
+    skills: coerceSkills(parsed),
+    model: cfg.model,
+    at: Date.now(),
+  };
 }
 
-// OpenAI-compatible chat/completions with vision — covers Ollama, LM Studio,
-// vLLM and any OpenAI-compatible endpoint (local or in-VPC). Fully air-gappable.
-async function analyzeLocal(
-  images: string[],
-  cfg: AiConfig,
-  onWait?: (s: number, a: number) => void,
-): Promise<AiResult> {
-  const content: unknown[] = [{ type: "text", text: PROMPT }];
-  for (const img of images) {
-    content.push({ type: "image_url", image_url: { url: img } }); // full data URL
-  }
-  const headers: Record<string, string> = cfg.apiKey
-    ? { Authorization: `Bearer ${cfg.apiKey}` }
-    : {};
-  const res = await postWithRetry(
-    `${trimSlash(cfg.baseUrl)}/chat/completions`,
-    headers,
-    JSON.stringify({
-      model: cfg.model,
-      max_tokens: 4096,
-      temperature: 0,
-      messages: [{ role: "user", content }],
-    }),
-    onWait,
-  );
-  if (!res.ok) throw new Error(`Lokales Modell ${res.status}: ${await errorDetail(res)}`);
-  const data = await res.json();
-  const msg = data?.choices?.[0]?.message?.content;
-  const text: string = typeof msg === "string"
-    ? msg
-    : Array.isArray(msg)
-      ? msg.map((p: { text?: string }) => p?.text ?? "").join("")
-      : "";
-  return buildResult(text, cfg.model);
-}
-
-/** Analyze rendered page images and return structured skills. Dispatches on provider. */
-export async function analyze(
-  images: string[],
-  cfg: AiConfig,
-  onWait?: (seconds: number, attempt: number) => void,
-): Promise<AiResult> {
-  return cfg.provider === "local"
-    ? analyzeLocal(images, cfg, onWait)
-    : analyzeAnthropic(images, cfg, onWait);
-}
-
-/**
- * Pull a model into a running Ollama via its native streaming /api/pull.
- * baseUrl is the OpenAI-style URL (…/v1); we derive the Ollama root from it.
- * Only works against Ollama (LM Studio/vLLM don't expose /api/pull).
- */
-export async function pullModel(
-  baseUrl: string,
-  model: string,
-  onProgress?: (status: string, percent: number | null) => void,
-): Promise<void> {
-  const root = trimSlash(baseUrl).replace(/\/v1$/, "");
-  const res = await fetch(`${root}/api/pull`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model, stream: true }),
-  });
-  if (!res.ok || !res.body) {
-    throw new Error(`Pull fehlgeschlagen (${res.status}): ${await errorDetail(res)}`);
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const lines = buf.split("\n");
-    buf = lines.pop() ?? "";
-    for (const line of lines) {
-      const t = line.trim();
-      if (!t) continue;
-      let o: { status?: string; error?: string; completed?: number; total?: number };
-      try {
-        o = JSON.parse(t);
-      } catch {
-        continue;
-      }
-      if (o.error) throw new Error(o.error);
-      const pct = o.total ? Math.round(((o.completed ?? 0) / o.total) * 100) : null;
-      onProgress?.(o.status ?? "", pct);
-    }
-  }
-}
-
-/** Fetch the exact list of models from the configured provider. */
-export async function listModels(cfg: AiConfig): Promise<ModelOption[]> {
-  const isAnthropic = cfg.provider === "anthropic";
-  const url = isAnthropic ? ANTHROPIC_MODELS : `${trimSlash(cfg.baseUrl)}/models`;
-  const headers: Record<string, string> = isAnthropic
-    ? anthropicHeaders(cfg.apiKey)
-    : cfg.apiKey
-      ? { Authorization: `Bearer ${cfg.apiKey}` }
-      : {};
-  const res = await fetch(url, { headers });
+/** Fetch the exact list of models available to this API key. */
+export async function listModels(apiKey: string): Promise<ModelOption[]> {
+  const res = await fetch(MODELS_ENDPOINT, { headers: headers(apiKey) });
   if (!res.ok) {
     throw new Error(`Modelle laden fehlgeschlagen (${res.status}): ${await errorDetail(res)}`);
   }

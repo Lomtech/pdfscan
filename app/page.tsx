@@ -9,9 +9,7 @@ import { parsePdf } from "@/lib/parse";
 import {
   analyze,
   listModels,
-  pullModel,
   type AiConfig,
-  type AiProvider,
   type ModelOption,
 } from "@/lib/ai";
 import { loadPdf } from "@/lib/pdf";
@@ -67,28 +65,12 @@ export default function Home() {
   const [reanalyzing, setReanalyzing] = useState(false);
   const [showAi, setShowAi] = useState(false);
   const [aiKey, setAiKey] = useState("");
-  const [aiProvider, setAiProvider] = useState<AiProvider>("anthropic");
-  const [aiBaseUrl, setAiBaseUrl] = useState("http://localhost:11434/v1");
-  // Model is remembered PER provider, so switching Cloud↔Souverän keeps each
-  // side's choice instead of carrying a Claude model into local mode or vice versa.
-  const [aiModelAnthropic, setAiModelAnthropic] = useState("claude-sonnet-4-5");
-  const [aiModelLocal, setAiModelLocal] = useState("");
-  const aiModel = aiProvider === "anthropic" ? aiModelAnthropic : aiModelLocal;
-  const setAiModel = useCallback(
-    (v: string | ((prev: string) => string)) => {
-      if (aiProvider === "anthropic") setAiModelAnthropic(v);
-      else setAiModelLocal(v);
-    },
-    [aiProvider],
-  );
+  const [aiModel, setAiModel] = useState("claude-sonnet-4-5");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiProgress, setAiProgress] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState("");
-  const [pullName, setPullName] = useState("qwen2.5vl:7b");
-  const [pulling, setPulling] = useState(false);
-  const [pullProgress, setPullProgress] = useState("");
   const autoTriedRef = useRef("");
   const [toast, setToast] = useState<{ id: number; msg: string } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -103,17 +85,10 @@ export default function Home() {
     setTaxonomy(loadTaxonomy());
     try {
       setAiKey(localStorage.getItem("pdf-skill-extractor:aiKey") ?? "");
-      setAiModelAnthropic(
-        localStorage.getItem("pdf-skill-extractor:aiModelAnthropic") ||
-          localStorage.getItem("pdf-skill-extractor:aiModel") ||
+      setAiModel(
+        localStorage.getItem("pdf-skill-extractor:aiModel") ||
+          localStorage.getItem("pdf-skill-extractor:aiModelAnthropic") ||
           "claude-sonnet-4-5",
-      );
-      setAiModelLocal(localStorage.getItem("pdf-skill-extractor:aiModelLocal") || "");
-      const prov = localStorage.getItem("pdf-skill-extractor:aiProvider");
-      if (prov === "local" || prov === "anthropic") setAiProvider(prov);
-      setAiBaseUrl(
-        localStorage.getItem("pdf-skill-extractor:aiBaseUrl") ||
-          "http://localhost:11434/v1",
       );
     } catch {
       /* ignore */
@@ -279,74 +254,47 @@ export default function Home() {
   }, [applyTaxonomy]);
 
   const aiCfg: AiConfig = useMemo(
-    () => ({
-      provider: aiProvider,
-      apiKey: aiKey.trim(),
-      model: aiModel.trim(),
-      baseUrl: aiBaseUrl.trim(),
-    }),
-    [aiProvider, aiKey, aiModel, aiBaseUrl],
+    () => ({ apiKey: aiKey.trim(), model: aiModel.trim() }),
+    [aiKey, aiModel],
   );
 
   const saveAiSettings = useCallback(() => {
     try {
       localStorage.setItem("pdf-skill-extractor:aiKey", aiKey.trim());
-      localStorage.setItem("pdf-skill-extractor:aiModelAnthropic", aiModelAnthropic.trim());
-      localStorage.setItem("pdf-skill-extractor:aiModelLocal", aiModelLocal.trim());
-      localStorage.setItem("pdf-skill-extractor:aiProvider", aiProvider);
-      localStorage.setItem("pdf-skill-extractor:aiBaseUrl", aiBaseUrl.trim());
+      localStorage.setItem("pdf-skill-extractor:aiModel", aiModel.trim());
     } catch {
       /* ignore */
     }
-  }, [aiKey, aiModelAnthropic, aiModelLocal, aiProvider, aiBaseUrl]);
+  }, [aiKey, aiModel]);
 
-  const aiReady =
-    aiProvider === "anthropic" ? !!aiKey.trim() : !!aiBaseUrl.trim();
+  const aiReady = !!aiKey.trim();
 
   const loadModels = useCallback(
     async (silent = false) => {
       if (!aiReady) {
-        if (!silent)
-          alert(
-            aiProvider === "anthropic"
-              ? "Bitte zuerst den API-Key eintragen."
-              : "Bitte zuerst die Base-URL eintragen.",
-          );
+        if (!silent) alert("Bitte zuerst den API-Key eintragen.");
         return;
       }
       setModelsLoading(true);
       setModelsError("");
       try {
-        const models = await listModels(aiCfg);
+        const models = await listModels(aiKey.trim());
         setModelOptions(models);
         if (!silent) showToast(`${models.length} Modelle geladen`);
       } catch (e) {
-        const raw = (e as Error).message || "unbekannter Fehler";
-        const msg =
-          aiProvider === "local"
-            ? `Endpoint nicht erreichbar (${raw}). Tipp: App lokal betreiben & Ollama mit OLLAMA_ORIGINS starten.`
-            : raw;
+        const msg = (e as Error).message || "unbekannter Fehler";
         setModelsError(msg);
         if (!silent) showToast(msg);
       } finally {
         setModelsLoading(false);
       }
     },
-    [aiCfg, aiReady, aiProvider, showToast],
+    [aiKey, aiReady, showToast],
   );
 
-  // Reset the model list when switching provider/endpoint (allow a fresh
-  // auto-load attempt for the new provider).
+  // Auto-load the model list once when the panel opens with a key present.
   useEffect(() => {
-    setModelOptions([]);
-    setModelsError("");
-    autoTriedRef.current = "";
-  }, [aiProvider, aiBaseUrl]);
-
-  // Auto-load models once per provider/endpoint. Guarded by a signature so a
-  // failing endpoint doesn't loop, but a provider switch re-attempts.
-  useEffect(() => {
-    const sig = `${aiProvider}|${aiBaseUrl}`;
+    const sig = aiKey.trim();
     if (
       showAi &&
       aiReady &&
@@ -357,56 +305,17 @@ export default function Home() {
       autoTriedRef.current = sig;
       void loadModels(true);
     }
-  }, [
-    showAi,
-    aiReady,
-    aiProvider,
-    aiBaseUrl,
-    aiKey,
-    modelOptions.length,
-    modelsLoading,
-    loadModels,
-  ]);
+  }, [showAi, aiReady, aiKey, modelOptions.length, modelsLoading, loadModels]);
 
-  // Self-heal: when a model list loads and the current provider has no model
-  // selected, pick the first available one (writes to the current provider).
+  // Self-heal: when the model list loads and no model is selected, pick the first.
   useEffect(() => {
     if (modelOptions.length === 0) return;
-    const setter =
-      aiProvider === "anthropic" ? setAiModelAnthropic : setAiModelLocal;
-    setter((prev) => (prev.trim() ? prev : modelOptions[0].id));
-  }, [modelOptions, aiProvider]);
-
-  const onPullModel = useCallback(async () => {
-    const name = pullName.trim();
-    if (!name || !aiBaseUrl.trim()) return;
-    setPulling(true);
-    setPullProgress("Starte Download…");
-    try {
-      await pullModel(aiBaseUrl.trim(), name, (status, pct) =>
-        setPullProgress(`${status}${pct != null ? ` ${pct}%` : ""}`),
-      );
-      setPullProgress(`✓ ${name} geladen`);
-      showToast(`Modell ${name} geladen`);
-      autoTriedRef.current = "";
-      await loadModels(true);
-      setAiModelLocal(name);
-    } catch (e) {
-      const msg = (e as Error).message;
-      setPullProgress(`Fehler: ${msg}`);
-      showToast(msg);
-    } finally {
-      setPulling(false);
-    }
-  }, [pullName, aiBaseUrl, loadModels, showToast]);
+    setAiModel((prev) => (prev.trim() ? prev : modelOptions[0].id));
+  }, [modelOptions]);
 
   const runAiAll = useCallback(async () => {
     if (!aiReady) {
-      alert(
-        aiProvider === "anthropic"
-          ? "Bitte zuerst den Anthropic API-Key eintragen."
-          : "Bitte zuerst die Base-URL des lokalen Modells eintragen.",
-      );
+      alert("Bitte zuerst den Anthropic API-Key eintragen.");
       return;
     }
     if (!aiCfg.model) {
@@ -462,7 +371,7 @@ export default function Home() {
     } finally {
       setAiBusy(false);
     }
-  }, [docs, aiCfg, aiReady, aiProvider, saveAiSettings]);
+  }, [docs, aiCfg, aiReady, saveAiSettings]);
 
   const downloadAiJson = useCallback(() => {
     const payload = docs
@@ -647,20 +556,11 @@ export default function Home() {
 
       {showAi && (
         <AiPanel
-          provider={aiProvider}
-          baseUrl={aiBaseUrl}
           apiKey={aiKey}
           model={aiModel}
           modelOptions={modelOptions}
           modelsLoading={modelsLoading}
           modelsError={modelsError}
-          pullName={pullName}
-          pulling={pulling}
-          pullProgress={pullProgress}
-          onChangePullName={setPullName}
-          onPullModel={onPullModel}
-          onChangeProvider={setAiProvider}
-          onChangeBaseUrl={setAiBaseUrl}
           onLoadModels={() => void loadModels(false)}
           onChangeKey={setAiKey}
           onChangeModel={setAiModel}
