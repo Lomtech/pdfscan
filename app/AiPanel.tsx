@@ -13,6 +13,7 @@ export function AiPanel({
   progress,
   analyzedCount,
   withBlobCount,
+  pendingCount,
   totalDocs,
 }: {
   apiKey: string;
@@ -27,6 +28,7 @@ export function AiPanel({
   progress: string;
   analyzedCount: number;
   withBlobCount: number;
+  pendingCount: number;
   totalDocs: number;
 }) {
   const inputCls =
@@ -80,10 +82,14 @@ export function AiPanel({
         <button
           type="button"
           onClick={onRunAll}
-          disabled={busy || !apiKey.trim() || withBlobCount === 0}
+          disabled={busy || !apiKey.trim() || pendingCount === 0}
           className="px-4 py-2 rounded font-semibold text-sm bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {busy ? "Analysiere…" : `Alle analysieren (${withBlobCount})`}
+          {busy
+            ? "Analysiere…"
+            : pendingCount === 0 && analyzedCount > 0
+              ? "Alle analysiert ✓"
+              : `Analysieren (${pendingCount})`}
         </button>
         <button
           type="button"

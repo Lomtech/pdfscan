@@ -9,6 +9,40 @@ export interface AiConfig {
   model: string;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Retry on 429 (rate limit) and 529 (overloaded), honoring the retry-after
+// header when present, otherwise exponential backoff. onWait reports the pause.
+async function postWithRetry(
+  body: string,
+  cfg: AiConfig,
+  onWait?: (seconds: number, attempt: number) => void,
+  maxRetries = 5,
+): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": cfg.apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body,
+    });
+    if ((res.status !== 429 && res.status !== 529) || attempt >= maxRetries) {
+      return res;
+    }
+    const ra = parseFloat(res.headers.get("retry-after") ?? "");
+    const waitMs =
+      Number.isFinite(ra) && ra > 0
+        ? ra * 1000
+        : Math.min(2000 * 2 ** attempt, 32000);
+    onWait?.(Math.ceil(waitMs / 1000), attempt + 1);
+    await sleep(waitMs + Math.random() * 400);
+  }
+}
+
 const PROMPT = `Du analysierst die Seiten EINES Dokuments (Stellenanzeige, Tätigkeits-/Anforderungsprofil, Skill-Matrix oder Lebenslauf).
 
 Extrahiere ALLE genannten fachlichen Skills: Programmiersprachen, Frameworks, Tools, Plattformen, Datenbanken, Methoden, Cloud/DevOps und Soft Skills.
@@ -71,6 +105,7 @@ function coerceSkills(raw: unknown): AiSkill[] {
 export async function analyzeWithClaude(
   pageImages: string[],
   cfg: AiConfig,
+  onWait?: (seconds: number, attempt: number) => void,
 ): Promise<AiResult> {
   const content: unknown[] = [{ type: "text", text: PROMPT }];
   for (const img of pageImages) {
@@ -84,20 +119,15 @@ export async function analyzeWithClaude(
     });
   }
 
-  const res = await fetch(ENDPOINT, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": cfg.apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
+  const res = await postWithRetry(
+    JSON.stringify({
       model: cfg.model,
       max_tokens: 4096,
       messages: [{ role: "user", content }],
     }),
-  });
+    cfg,
+    onWait,
+  );
 
   if (!res.ok) {
     let detail = "";

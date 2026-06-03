@@ -258,15 +258,19 @@ export default function Home() {
       alert("Bitte zuerst den Anthropic API-Key eintragen.");
       return;
     }
-    const targets = docs.filter((d) => d.blob);
+    // Resumable: only docs that have stored PDF data and aren't analyzed yet.
+    const targets = docs.filter((d) => d.blob && !d.ai);
     if (targets.length === 0) {
       alert(
-        "Keine Dokumente mit gespeicherten PDF-Daten. Für die KI-Analyse die PDFs bitte neu hochladen.",
+        docs.some((d) => d.blob)
+          ? "Alle Dokumente mit PDF-Daten sind bereits analysiert. Zum Neu-Analysieren die PDFs löschen und neu hochladen."
+          : "Keine Dokumente mit gespeicherten PDF-Daten. Für die KI-Analyse die PDFs bitte neu hochladen.",
       );
       return;
     }
     saveAiSettings();
     setAiBusy(true);
+    let done = 0;
     try {
       for (let i = 0; i < targets.length; i++) {
         const d = targets[i];
@@ -279,17 +283,27 @@ export default function Home() {
           } finally {
             await destroy();
           }
-          const ai = await analyzeWithClaude(images, cfg);
+          const ai = await analyzeWithClaude(images, cfg, (sec, attempt) =>
+            setAiProgress(
+              `${i + 1}/${targets.length}: ${d.name} – Rate-Limit, warte ${sec}s… (Versuch ${attempt})`,
+            ),
+          );
           const rec: DocRecord = { ...d, ai };
           await putDoc(rec);
           setDocs((prev) => prev.map((x) => (x.id === d.id ? rec : x)));
+          done += 1;
+          // Gentle pacing between documents to stay under the rate limit.
+          if (i < targets.length - 1) await new Promise((r) => setTimeout(r, 700));
         } catch (e) {
-          // Stop on first error (e.g. bad key/model) so we don't burn calls.
-          setAiProgress(`Abbruch bei ${d.name}: ${(e as Error).message}`);
+          // Stop on a persistent error (after retries). Already-done docs are
+          // saved, so the user can just click again to resume from here.
+          setAiProgress(
+            `Gestoppt bei ${d.name}: ${(e as Error).message} — ${done} fertig, „Alle analysieren" setzt fort.`,
+          );
           return;
         }
       }
-      setAiProgress(`Fertig: ${targets.length} Dokument(e) analysiert.`);
+      setAiProgress(`Fertig: ${done} Dokument(e) analysiert.`);
     } finally {
       setAiBusy(false);
     }
@@ -338,6 +352,10 @@ export default function Home() {
   );
   const aiWithBlobCount = useMemo(
     () => docs.filter((d) => d.blob).length,
+    [docs],
+  );
+  const aiPendingCount = useMemo(
+    () => docs.filter((d) => d.blob && !d.ai).length,
     [docs],
   );
 
@@ -493,6 +511,7 @@ export default function Home() {
           progress={aiProgress}
           analyzedCount={aiAnalyzedCount}
           withBlobCount={aiWithBlobCount}
+          pendingCount={aiPendingCount}
           totalDocs={docs.length}
         />
       )}
