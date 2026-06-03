@@ -10,6 +10,11 @@ export function AiPanel({
   modelOptions,
   modelsLoading,
   modelsError,
+  pullName,
+  pulling,
+  pullProgress,
+  onChangePullName,
+  onPullModel,
   onChangeProvider,
   onChangeBaseUrl,
   onLoadModels,
@@ -33,6 +38,11 @@ export function AiPanel({
   modelOptions: ModelOption[];
   modelsLoading: boolean;
   modelsError: string;
+  pullName: string;
+  pulling: boolean;
+  pullProgress: string;
+  onChangePullName: (v: string) => void;
+  onPullModel: () => void;
   onChangeProvider: (v: AiProvider) => void;
   onChangeBaseUrl: (v: string) => void;
   onLoadModels: () => void;
@@ -187,6 +197,35 @@ export function AiPanel({
             Key speichern
           </button>
         </div>
+        {provider === "local" && (
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <span className="text-xs text-zinc-500">Modell ziehen:</span>
+            <input
+              className={`${inputCls} flex-1 min-w-[180px]`}
+              placeholder="z. B. qwen2.5vl:7b  (oder :32b für mehr Genauigkeit)"
+              value={pullName}
+              onChange={(e) => onChangePullName(e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={onPullModel}
+              disabled={pulling || !pullName.trim() || !baseUrl.trim()}
+              className="px-3 py-1.5 rounded text-sm border border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {pulling ? "lädt…" : "⬇ Modell herunterladen"}
+            </button>
+            {pullProgress && (
+              <span className="text-xs text-zinc-600 dark:text-zinc-400 break-words">
+                {pullProgress}
+              </span>
+            )}
+          </div>
+        )}
+        {provider === "local" && !modelsError && modelOptions.length > 0 && (
+          <p className="text-xs text-emerald-700 dark:text-emerald-400">
+            ✓ Ollama erreichbar · {modelOptions.length} Modell(e) lokal
+          </p>
+        )}
         {localEndpointOnRemote && (
           <p className="text-xs text-amber-600">
             ⚠️ Souverän mit localhost-Endpoint geht nur, wenn die App selbst

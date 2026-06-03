@@ -9,6 +9,7 @@ import { parsePdf } from "@/lib/parse";
 import {
   analyze,
   listModels,
+  pullModel,
   type AiConfig,
   type AiProvider,
   type ModelOption,
@@ -85,6 +86,9 @@ export default function Home() {
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState("");
+  const [pullName, setPullName] = useState("qwen2.5vl:7b");
+  const [pulling, setPulling] = useState(false);
+  const [pullProgress, setPullProgress] = useState("");
   const autoTriedRef = useRef("");
   const [toast, setToast] = useState<{ id: number; msg: string } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -373,6 +377,29 @@ export default function Home() {
     setter((prev) => (prev.trim() ? prev : modelOptions[0].id));
   }, [modelOptions, aiProvider]);
 
+  const onPullModel = useCallback(async () => {
+    const name = pullName.trim();
+    if (!name || !aiBaseUrl.trim()) return;
+    setPulling(true);
+    setPullProgress("Starte Download…");
+    try {
+      await pullModel(aiBaseUrl.trim(), name, (status, pct) =>
+        setPullProgress(`${status}${pct != null ? ` ${pct}%` : ""}`),
+      );
+      setPullProgress(`✓ ${name} geladen`);
+      showToast(`Modell ${name} geladen`);
+      autoTriedRef.current = "";
+      await loadModels(true);
+      setAiModelLocal(name);
+    } catch (e) {
+      const msg = (e as Error).message;
+      setPullProgress(`Fehler: ${msg}`);
+      showToast(msg);
+    } finally {
+      setPulling(false);
+    }
+  }, [pullName, aiBaseUrl, loadModels, showToast]);
+
   const runAiAll = useCallback(async () => {
     if (!aiReady) {
       alert(
@@ -627,6 +654,11 @@ export default function Home() {
           modelOptions={modelOptions}
           modelsLoading={modelsLoading}
           modelsError={modelsError}
+          pullName={pullName}
+          pulling={pulling}
+          pullProgress={pullProgress}
+          onChangePullName={setPullName}
+          onPullModel={onPullModel}
           onChangeProvider={setAiProvider}
           onChangeBaseUrl={setAiBaseUrl}
           onLoadModels={() => void loadModels(false)}

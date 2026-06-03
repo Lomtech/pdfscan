@@ -203,6 +203,50 @@ export async function analyze(
     : analyzeAnthropic(images, cfg, onWait);
 }
 
+/**
+ * Pull a model into a running Ollama via its native streaming /api/pull.
+ * baseUrl is the OpenAI-style URL (…/v1); we derive the Ollama root from it.
+ * Only works against Ollama (LM Studio/vLLM don't expose /api/pull).
+ */
+export async function pullModel(
+  baseUrl: string,
+  model: string,
+  onProgress?: (status: string, percent: number | null) => void,
+): Promise<void> {
+  const root = trimSlash(baseUrl).replace(/\/v1$/, "");
+  const res = await fetch(`${root}/api/pull`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model, stream: true }),
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`Pull fehlgeschlagen (${res.status}): ${await errorDetail(res)}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t) continue;
+      let o: { status?: string; error?: string; completed?: number; total?: number };
+      try {
+        o = JSON.parse(t);
+      } catch {
+        continue;
+      }
+      if (o.error) throw new Error(o.error);
+      const pct = o.total ? Math.round(((o.completed ?? 0) / o.total) * 100) : null;
+      onProgress?.(o.status ?? "", pct);
+    }
+  }
+}
+
 /** Fetch the exact list of models from the configured provider. */
 export async function listModels(cfg: AiConfig): Promise<ModelOption[]> {
   const isAnthropic = cfg.provider === "anthropic";
